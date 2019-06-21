@@ -65,6 +65,10 @@ uint8_t RX_Buffer[8];
 uint8_t Packet_Length;
 int counter = 0;
 
+float VoltSense;
+uint8_t set_power;
+uint8_t Volt = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -129,10 +133,9 @@ int main(void)
 	MainBoard_Response[1] = 0xFF;
 	MainBoard_Response[2] = MY_ID;
 	MainBoard_Response[4] = DXL_NoError;
-	// Master.Buffer[Master.BufferLastIndex + 7] = set_power;
-	// Power(set_power);
+	Master.Buffer[Master.BufferLastIndex + 7] = set_power;
+	Power(set_power);
 	HAL_UART_Receive_IT(&huart3, &Master.InputData, 1);
-	// duty = 80;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -148,7 +151,7 @@ int main(void)
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
 			counter = 0;
 		}
-		// Set_OutputVoltage(Volt);
+		Set_OutputVoltage(Volt);
   }
   /* USER CODE END 3 */
 }
@@ -202,7 +205,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if(huart->Instance == USART3)
 	{
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+		// HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
 		Packet_Length = Master_CheckPacket(&huart3, &Master);
 		if(Packet_Length > 0)
 		{
@@ -217,12 +220,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 						break;
 						case DXL_WRITE_DATA:
 							if(Master.Buffer[Master.BufferLastIndex + 5]==0)
-								// Volt = Master.Buffer[Master.BufferLastIndex + 6];
+								Volt = Master.Buffer[Master.BufferLastIndex + 6];
 							else 
 								Power(Master.Buffer[Master.BufferLastIndex + 6]);
 						break;
-						
-						
 					}
 				}
 			}
@@ -259,13 +260,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
 	Input_Voltage = adc_buffer[2] * (3.3/4095) * (1/0.1076);  
 	Output_Voltage = adc_buffer[1] * (3.3/4095) * (1/0.1076);
-	// VoltSense = adc_buffer[0] + ZeroOffset;
-	// Output_Current =(((ACSoffset) - (VoltSense))*0.806)/185;
-	// if(CurrentValue < 0)
-	// 	  CurrentValue = 0;
-	// if (CurrentValue > 4)
-	// 	  counter++;
-	
+	VoltSense = adc_buffer[0] + ZeroOffset;
+	Output_Current =(((ACSoffset) - (VoltSense))*0.806)/185;
+	if (Output_Current > 4)
+	{
+		counter++;
+	}
 }
 
 void LookUpTable_Update(void)
