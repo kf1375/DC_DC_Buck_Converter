@@ -2,12 +2,12 @@
 
 void DXLStruct_Initializer(DXLLineTypeDef*  stct)
 {
-	stct->InputData 	  		 = 0;
-	stct->Buffer[0]					 = 0;
+	stct->InputData = 0;
+	stct->Buffer[0] = 0;
 	stct->BufferCurrentIndex = 0;
-	stct->CurrentState 		 	 = 0;
-	stct->BufferLastIndex 	 = 0;
-	stct->Length 			 		 	 = 0;	
+	stct->CurrentState = 0;
+	stct->BufferLastIndex = 0;
+	stct->Length = 0;	
 }
 
 uint8_t Master_CheckPacket(UART_HandleTypeDef *UARTx, DXLLineTypeDef* master)

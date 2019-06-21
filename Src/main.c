@@ -28,11 +28,15 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "BuckConverter_UART.h"
+#include "BuckConverter_PID.h"
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+PID_TypeDef pid;
+DXLLineTypeDef Master;
 
 /* USER CODE END PTD */
 
@@ -49,12 +53,28 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+volatile uint16_t  adc_buffer[3];
+uint8_t IN_Voltage, OUT_Voltage;
+float Input_Voltage, Output_Voltage, Output_Current;
+double Pid_Value = 0;
+uint32_t ACSoffset = 3102;
+uint32_t ZeroOffset = 0;
+uint8_t MainBoard_Response[10];
+uint8_t LookUp_Table[10];
+uint8_t RX_Buffer[8];
+uint8_t Packet_Length;
+int counter = 0;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+void Power(uint8_t SetPower);
+void Set_OutputVoltage(uint8_t Voltage);
+void LookUpTable_Update(void);
+void Parameters_init(void);
+void MainBoardRead_Data(uint8_t *Packet);
 
 /* USER CODE END PFP */
 
@@ -98,7 +118,21 @@ int main(void)
   MX_USART3_UART_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_Base_Start_IT(&htim3);
+	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)&adc_buffer[0], 3);
+  PID_Init(&pid, 1, 0, 0);
 
+	DXLStruct_Initializer(&Master);
+	
+	MainBoard_Response[0] = 0xFF;
+	MainBoard_Response[1] = 0xFF;
+	MainBoard_Response[2] = MY_ID;
+	MainBoard_Response[4] = DXL_NoError;
+	// Master.Buffer[Master.BufferLastIndex + 7] = set_power;
+	// Power(set_power);
+	HAL_UART_Receive_IT(&huart3, &Master.InputData, 1);
+	// duty = 80;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -108,6 +142,13 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		LookUpTable_Update();
+		if(counter >= 100 )
+		{
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+			counter = 0;
+		}
+		// Set_OutputVoltage(Volt);
   }
   /* USER CODE END 3 */
 }
@@ -157,6 +198,107 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART3)
+	{
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+		Packet_Length = Master_CheckPacket(&huart3, &Master);
+		if(Packet_Length > 0)
+		{
+			if(Master.Buffer[Master.BufferLastIndex + 2] == MY_ID)
+			{
+				if(DXL_CheckSumCalc(&Master.Buffer[Master.BufferLastIndex]) == Master.Buffer[Master.BufferLastIndex + Packet_Length - 1])
+				{
+					switch(Master.Buffer[Master.BufferLastIndex + 4])
+					{
+						case DXL_READ_DATA:
+							MainBoardRead_Data(&Master.Buffer[Master.BufferLastIndex]);					
+						break;
+						case DXL_WRITE_DATA:
+							if(Master.Buffer[Master.BufferLastIndex + 5]==0)
+								// Volt = Master.Buffer[Master.BufferLastIndex + 6];
+							else 
+								Power(Master.Buffer[Master.BufferLastIndex + 6]);
+						break;
+						
+						
+					}
+				}
+			}
+		}
+	}
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+}
+
+void Set_OutputVoltage(uint8_t Voltage)
+{ 
+	if( Voltage < 15 )
+	{
+	// HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);		//ShutDown_Gpio
+	Pid_Value = PID_Compute(&pid, Output_Voltage, Voltage);
+	Pid_Value  *= 6;
+	//duty = Voltage * 100 / InputVoltage;
+	if(Pid_Value<1 && Pid_Value > 0)
+	{
+		Pid_Value = 1;
+	}
+	else if(Pid_Value > -1 && Pid_Value < 0)
+	{
+		Pid_Value = -1;
+	}
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint16_t)Pid_Value);
+	}
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+	Input_Voltage = adc_buffer[2] * (3.3/4095) * (1/0.1076);  
+	Output_Voltage = adc_buffer[1] * (3.3/4095) * (1/0.1076);
+	// VoltSense = adc_buffer[0] + ZeroOffset;
+	// Output_Current =(((ACSoffset) - (VoltSense))*0.806)/185;
+	// if(CurrentValue < 0)
+	// 	  CurrentValue = 0;
+	// if (CurrentValue > 4)
+	// 	  counter++;
+	
+}
+
+void LookUpTable_Update(void)
+{
+	IN_Voltage  = Input_Voltage  * 10;
+	OUT_Voltage = Output_Voltage * 10;
+	LookUp_Table[0] = IN_Voltage;
+	LookUp_Table[1] = OUT_Voltage;
+}
+
+void MainBoardRead_Data(uint8_t* Packet)
+{
+	MainBoard_Response[3] = Packet[6] + 2;
+	for(uint8_t i = 0; i < Packet[6]; i++)
+	{
+		MainBoard_Response[i + 5] = LookUp_Table[Packet[5] + i];
+	}
+	MainBoard_Response[Packet[6] + 5] = DXL_CheckSumCalc(MainBoard_Response);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);
+	HAL_UART_Transmit_IT(&huart3, MainBoard_Response, MainBoard_Response[3] + 4);
+}
+void Power(uint8_t SetPower)
+{
+	if(SetPower == 0x01)
+	{
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+	}
+if(SetPower == 0x00)
+	{
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+	}
+}
+
 
 /* USER CODE END 4 */
 
