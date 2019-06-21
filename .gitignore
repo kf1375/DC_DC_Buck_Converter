@@ -1,3 +1,4 @@
+.vscode/*
 MDK-ARM/*
 !MDK-ARM/BuckConverter.uvoptx
 !MDK-ARM/BuckConverter.uvprojx
