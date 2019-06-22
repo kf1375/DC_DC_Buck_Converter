@@ -53,7 +53,7 @@ DXLLineTypeDef Master;
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-volatile uint16_t  adc_buffer[3];
+uint32_t  adc_buffer[3];
 uint8_t IN_Voltage, OUT_Voltage;
 float Input_Voltage, Output_Voltage, Output_Current;
 double Pid_Value = 0;
@@ -64,7 +64,7 @@ uint8_t LookUp_Table[10];
 uint8_t RX_Buffer[8];
 uint8_t Packet_Length;
 int counter = 0;
-
+float duty;
 float VoltSense;
 uint8_t set_power;
 uint8_t Volt = 0;
@@ -122,9 +122,8 @@ int main(void)
   MX_USART3_UART_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	HAL_ADC_Start_DMA(&hadc1, adc_buffer, 3);
   HAL_TIM_Base_Start_IT(&htim3);
-	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)&adc_buffer[0], 3);
   PID_Init(&pid, 1, 0, 0);
 
 	DXLStruct_Initializer(&Master);
@@ -136,6 +135,11 @@ int main(void)
 	Master.Buffer[Master.BufferLastIndex + 7] = set_power;
 	Power(set_power);
 	HAL_UART_Receive_IT(&huart3, &Master.InputData, 1);
+	duty = 12 * 100 / Input_Voltage;
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint16_t)duty);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+	HAL_UART_Receive_IT(&huart3, &Master.InputData, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -145,6 +149,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		
 		LookUpTable_Update();
 		if(counter >= 100 )
 		{
@@ -152,6 +157,7 @@ int main(void)
 			counter = 0;
 		}
 		Set_OutputVoltage(Volt);
+
   }
   /* USER CODE END 3 */
 }
@@ -233,31 +239,32 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(TX_EN_GPIO_Port, TX_EN_Pin, GPIO_PIN_RESET);
 }
 
 void Set_OutputVoltage(uint8_t Voltage)
 { 
 	if( Voltage < 15 )
 	{
-	// HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);		//ShutDown_Gpio
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);		//ShutDown_Gpio
 	Pid_Value = PID_Compute(&pid, Output_Voltage, Voltage);
-	Pid_Value  *= 6;
-	//duty = Voltage * 100 / InputVoltage;
-	if(Pid_Value<1 && Pid_Value > 0)
+	duty = Voltage * 100 / Input_Voltage;
+	duty += Pid_Value;
+	/* if(Pid_Value<1 && Pid_Value > 0)
 	{
 		Pid_Value = 1;
 	}
 	else if(Pid_Value > -1 && Pid_Value < 0)
 	{
 		Pid_Value = -1;
+	}*/
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint16_t)duty);
 	}
-	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint16_t)Pid_Value);
-	}
+
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
+{ 
 	Input_Voltage = adc_buffer[2] * (3.3/4095) * (1/0.1076);  
 	Output_Voltage = adc_buffer[1] * (3.3/4095) * (1/0.1076);
 	VoltSense = adc_buffer[0] + ZeroOffset;
@@ -266,6 +273,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 	{
 		counter++;
 	}
+	
 }
 
 void LookUpTable_Update(void)
